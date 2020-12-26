@@ -17,8 +17,6 @@ func getAccount(i int) (a *wallet.Account) {
 	seeds := []string{
 		"52fdfc072182654f163f5f0f9a621d729566c74d10037c4d7bbb0407d1e2c649",
 		"dfaf7d4eba814bcb3a9926011d83e3fda34b8e11e635b3834a3e3cb5279a941e",
-		"81ed76006edbf8bc9ed1a9037c104987871462ab78ab4adec192cf2ffa9b58b2",
-		"75d4904c847aaee488aad6ffbcf837da795cc67b943d9a7e0a3bdd2125d5855d",
 	}
 	seed, _ := hex.DecodeString(seeds[i])
 	w, _ := wallet.NewWallet(seed)
@@ -47,8 +45,8 @@ func loadChain(t *testing.T, address string) (chain *tokenchain.Chain) {
 
 var supply = big.NewInt(1e9)
 
-func genesis(t *testing.T, chain *tokenchain.Chain) (token *tokenchain.Token) {
-	token, err := tokenchain.Genesis(chain, getAccount(0), "TOKEN", supply, 5)
+func genesis(t *testing.T, chain *tokenchain.Chain, a *wallet.Account) (token *tokenchain.Token) {
+	token, err := tokenchain.TokenGenesis(chain, a, "TOKEN", supply, 5)
 	require.Nil(t, err)
 	return
 }
@@ -74,16 +72,16 @@ func assertEqualToken(t *testing.T, t1, t2 *tokenchain.Token) {
 
 func TestGenesis(t *testing.T) {
 	chain := newChain(t)
-	token := genesis(t, chain)
+	token := genesis(t, chain, getAccount(0))
 	assert.Equal(t, supply, token.Balance(getAccount(0).Address()))
 	assertEqualChain(t, chain, loadChain(t, chain.Address()))
 }
 
 func TestTransfer(t *testing.T) {
 	chain := newChain(t)
-	token := genesis(t, chain)
+	token := genesis(t, chain, getAccount(0))
 	amount := big.NewInt(1000)
-	err := token.Transfer(chain, getAccount(0), getAccount(1).Address(), amount)
+	_, err := token.Transfer(getAccount(0), getAccount(1).Address(), amount)
 	require.Nil(t, err)
 	assert.Equal(t, new(big.Int).Sub(supply, amount), token.Balance(getAccount(0).Address()))
 	assert.Equal(t, amount, token.Balance(getAccount(1).Address()))

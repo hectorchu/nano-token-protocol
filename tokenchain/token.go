@@ -10,21 +10,17 @@ import (
 
 // Token represents a token.
 type Token struct {
+	c        *Chain
+	hash     rpc.BlockHash
 	name     string
 	supply   *big.Int
 	decimals byte
-	hash     rpc.BlockHash
 	balances map[string]*big.Int
 }
 
-func newToken(name string, supply *big.Int, decimals byte, hash rpc.BlockHash) *Token {
-	return &Token{
-		name:     name,
-		supply:   supply,
-		decimals: decimals,
-		hash:     hash,
-		balances: make(map[string]*big.Int),
-	}
+// Hash returns the block hash of the token.
+func (t *Token) Hash() rpc.BlockHash {
+	return t.hash
 }
 
 // Name returns the token name.
@@ -34,7 +30,7 @@ func (t *Token) Name() string {
 
 // Supply returns the token supply.
 func (t *Token) Supply() *big.Int {
-	return t.supply
+	return new(big.Int).Set(t.supply)
 }
 
 // Decimals returns the token decimals.
@@ -42,16 +38,11 @@ func (t *Token) Decimals() byte {
 	return t.decimals
 }
 
-// Hash returns the block hash for the token.
-func (t *Token) Hash() rpc.BlockHash {
-	return t.hash
-}
-
 // Balances gets the token balances.
 func (t *Token) Balances() (balances map[string]*big.Int) {
 	balances = make(map[string]*big.Int)
 	for account, balance := range t.balances {
-		balances[account] = balance
+		balances[account] = new(big.Int).Set(balance)
 	}
 	return
 }
@@ -60,81 +51,94 @@ func (t *Token) Balances() (balances map[string]*big.Int) {
 func (t *Token) Balance(account string) (balance *big.Int) {
 	balance, ok := t.balances[account]
 	if !ok {
-		balance = &big.Int{}
+		return new(big.Int)
 	}
-	return
+	return new(big.Int).Set(balance)
 }
 
 func (t *Token) setBalance(account string, balance *big.Int) {
 	t.balances[account] = balance
 }
 
-// Genesis initializes a new token on a chain.
-func Genesis(c *Chain, a *wallet.Account, name string, supply *big.Int, decimals byte) (t *Token, err error) {
+func (t *Token) checkBalance(account string, amount *big.Int) (err error) {
+	if err = checkPositive(amount); err != nil {
+		return
+	}
+	if t.Balance(account).Cmp(amount) < 0 {
+		err = errors.New("Insufficient balance")
+	}
+	return
+}
+
+// TokenGenesis initializes a new token on a chain.
+func TokenGenesis(c *Chain, a *wallet.Account, name string, supply *big.Int, decimals byte) (t *Token, err error) {
 	if err = c.Parse(); err != nil {
 		return
 	}
-	m := &genesisMessage{
+	if err = checkPositive(supply); err != nil {
+		return
+	}
+	hash, err := c.send(a, "", &genesisMessage{
 		decimals: decimals,
 		name:     name,
 		supply:   supply,
-	}
-	if err = setData(a, m.serialize()); err != nil {
-		return
-	}
-	hash, err := a.Send(c.a.Address(), big.NewInt(1))
+	})
 	if err != nil {
-		return
-	}
-	if hash, err = c.confirm(hash); err != nil {
-		return
-	}
-	if err = c.Parse(); err != nil {
 		return
 	}
 	return c.Token(hash)
 }
 
-// Transfer transfers an amount of tokens to another account.
-func (t *Token) Transfer(c *Chain, a *wallet.Account, account string, amount *big.Int) (err error) {
-	if err = c.Parse(); err != nil {
+func (m *genesisMessage) process(c *Chain, hash rpc.BlockHash, height uint32, info rpc.BlockInfo) (valid bool, err error) {
+	if err = checkPositive(m.supply); err != nil {
 		return
 	}
-	balance := t.Balance(a.Address())
-	if balance.Cmp(amount) < 0 {
-		return errors.New("insufficient balance")
+	t := &Token{
+		c:        c,
+		hash:     hash,
+		name:     m.name,
+		supply:   m.supply,
+		decimals: m.decimals,
+		balances: make(map[string]*big.Int),
 	}
-	height, err := c.getHeight(t.hash)
-	if err != nil {
-		return
-	}
-	m := &transferMessage{
-		token:  height,
-		amount: amount,
-	}
-	if err = setData(a, m.serialize()); err != nil {
-		return
-	}
-	if _, err = a.Send(account, big.NewInt(1)); err != nil {
-		return
-	}
-	hash, err := a.Send(c.a.Address(), big.NewInt(1))
-	if err != nil {
-		return
-	}
-	if _, err = c.confirm(hash); err != nil {
-		return
-	}
-	return c.Parse()
+	t.setBalance(info.BlockAccount, m.supply)
+	c.tokens[height] = t
+	return true, nil
 }
 
-func (t *Token) doTransfer(src, dest string, amount *big.Int) (err error) {
-	balance := t.Balance(src)
-	if balance.Cmp(amount) < 0 {
-		return errors.New("insufficient balance")
+// Transfer transfers an amount of tokens to another account.
+func (t *Token) Transfer(a *wallet.Account, account string, amount *big.Int) (hash rpc.BlockHash, err error) {
+	if err = t.c.Parse(); err != nil {
+		return
 	}
-	t.setBalance(src, balance.Sub(balance, amount))
-	balance = t.Balance(dest)
-	t.setBalance(dest, balance.Add(balance, amount))
+	if err = t.checkBalance(a.Address(), amount); err != nil {
+		return
+	}
+	height, err := t.c.getHeight(t.hash)
+	if err != nil {
+		return
+	}
+	return t.c.send(a, account, &transferMessage{
+		token:  height,
+		amount: amount,
+	})
+}
+
+func (m *transferMessage) process(c *Chain, hash rpc.BlockHash, height uint32, info rpc.BlockInfo) (valid bool, err error) {
+	t, ok := c.tokens[m.token]
+	if !ok {
+		return
+	}
+	if t.checkBalance(info.BlockAccount, m.amount) != nil {
+		return
+	}
+	destination, valid, err := c.getDestination(info.Contents)
+	if !valid {
+		return
+	}
+	balance := t.Balance(info.BlockAccount)
+	t.setBalance(info.BlockAccount, balance.Sub(balance, m.amount))
+	balance = t.Balance(destination)
+	t.setBalance(destination, balance.Add(balance, m.amount))
 	return
 }

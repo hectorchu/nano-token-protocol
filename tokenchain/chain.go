@@ -18,6 +18,7 @@ type Chain struct {
 	a        *wallet.Account
 	frontier rpc.BlockHash
 	tokens   map[uint32]*Token
+	swaps    map[uint32]*Swap
 }
 
 // NewChain initializes a new chain.
@@ -75,6 +76,7 @@ func newFromSeed(seed []byte, rpcURL string) (c *Chain, err error) {
 		w:      w,
 		a:      a,
 		tokens: make(map[uint32]*Token),
+		swaps:  make(map[uint32]*Swap),
 	}
 	return
 }
@@ -86,9 +88,9 @@ func (c *Chain) WaitForOpen() (err error) {
 		switch {
 		case err != nil:
 			return err
-		case balance.Cmp(big.NewInt(0)) > 0:
+		case balance.Sign() > 0:
 			return nil
-		case pending.Cmp(big.NewInt(0)) > 0:
+		case pending.Sign() > 0:
 			if err = c.a.ReceivePendings(); err != nil {
 				return err
 			}
@@ -100,6 +102,24 @@ func (c *Chain) WaitForOpen() (err error) {
 
 func (c *Chain) rpc() *rpc.Client {
 	return &c.w.RPC
+}
+
+func (c *Chain) send(a *wallet.Account, destination string, m message) (hash rpc.BlockHash, err error) {
+	if err = setData(a, m.serialize()); err != nil {
+		return
+	}
+	if destination != "" {
+		if _, err = a.Send(destination, big.NewInt(1)); err != nil {
+			return
+		}
+	}
+	if hash, err = a.Send(c.Address(), big.NewInt(1)); err != nil {
+		return
+	}
+	if hash, err = c.confirm(hash); err != nil {
+		return
+	}
+	return hash, c.Parse()
 }
 
 func (c *Chain) confirm(link rpc.BlockHash) (hash rpc.BlockHash, err error) {
@@ -164,33 +184,26 @@ func (c *Chain) Parse() (err error) {
 			c.frontier = hash
 			continue
 		}
-		switch m := m.(type) {
-		case *genesisMessage:
-			t := newToken(m.name, m.supply, m.decimals, hash)
-			t.setBalance(info.BlockAccount, m.supply)
-			c.tokens[height] = t
-		case *transferMessage:
-			t, ok := c.tokens[m.token]
-			if !ok {
-				break
-			}
-			prev, err := c.rpc().BlockInfo(info.Contents.Previous)
-			if err != nil {
-				return err
-			}
-			if prev.Subtype != "send" {
-				break
-			}
-			if prev.Contents.Representative != info.Contents.Representative {
-				break
-			}
-			if err = t.doTransfer(info.BlockAccount, prev.Contents.LinkAsAccount, m.amount); err != nil {
-				break
-			}
+		if _, err = m.process(c, hash, height, info); err != nil {
+			return err
 		}
 		c.frontier = hash
 	}
 	return
+}
+
+func (c *Chain) getDestination(block *rpc.Block) (account string, valid bool, err error) {
+	info, err := c.rpc().BlockInfo(block.Previous)
+	if err != nil {
+		return
+	}
+	if info.Subtype != "send" {
+		return
+	}
+	if info.Contents.Representative != block.Representative {
+		return
+	}
+	return info.Contents.LinkAsAccount, true, nil
 }
 
 func (c *Chain) getHeight(hash rpc.BlockHash) (height uint32, err error) {
@@ -201,7 +214,7 @@ func (c *Chain) getHeight(hash rpc.BlockHash) (height uint32, err error) {
 	if info.BlockAccount == c.Address() {
 		height = uint32(info.Height)
 	} else {
-		err = errors.New("block is not on this chain")
+		err = errors.New("Block is not on this chain")
 	}
 	return
 }
@@ -209,21 +222,34 @@ func (c *Chain) getHeight(hash rpc.BlockHash) (height uint32, err error) {
 // Tokens gets the chain's tokens.
 func (c *Chain) Tokens() (tokens map[string]*Token) {
 	tokens = make(map[string]*Token)
-	for _, token := range c.tokens {
-		tokens[string(token.Hash())] = token
+	for _, t := range c.tokens {
+		tokens[string(t.Hash())] = t
 	}
 	return
 }
 
 // Token gets the token at the specified block hash.
-func (c *Chain) Token(hash rpc.BlockHash) (token *Token, err error) {
+func (c *Chain) Token(hash rpc.BlockHash) (t *Token, err error) {
 	height, err := c.getHeight(hash)
 	if err != nil {
 		return
 	}
-	token, ok := c.tokens[height]
+	t, ok := c.tokens[height]
 	if !ok {
-		err = errors.New("token not found")
+		err = errors.New("Token not found")
+	}
+	return
+}
+
+// Swap gets the swap at the specified block hash.
+func (c *Chain) Swap(hash rpc.BlockHash) (s *Swap, err error) {
+	height, err := c.getHeight(hash)
+	if err != nil {
+		return
+	}
+	s, ok := c.swaps[height]
+	if !ok {
+		err = errors.New("Swap not found")
 	}
 	return
 }
