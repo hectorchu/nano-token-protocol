@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/hectorchu/gonano/wallet"
-	"github.com/hectorchu/nano-token-server/tokenchain"
+	"github.com/hectorchu/nano-token-protocol/tokenchain"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

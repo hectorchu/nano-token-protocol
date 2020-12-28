@@ -1,4 +1,4 @@
-module github.com/hectorchu/nano-token-server
+module github.com/hectorchu/nano-token-protocol
 
 go 1.15
 

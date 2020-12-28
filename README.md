@@ -1,5 +1,5 @@
 ```
-package tokenchain // import "github.com/hectorchu/nano-token-server/tokenchain"
+package tokenchain // import "github.com/hectorchu/nano-token-protocol/tokenchain"
 
 
 TYPES
