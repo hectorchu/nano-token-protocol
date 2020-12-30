@@ -104,12 +104,12 @@ func (c *Chain) rpc() *rpc.Client {
 	return &c.w.RPC
 }
 
-func (c *Chain) send(a *wallet.Account, destination string, m message) (hash rpc.BlockHash, err error) {
+func (c *Chain) send(a *wallet.Account, destination *string, m message) (hash rpc.BlockHash, err error) {
 	if err = setData(a, m.serialize()); err != nil {
 		return
 	}
-	if destination != "" {
-		if _, err = a.Send(destination, big.NewInt(1)); err != nil {
+	if destination != nil {
+		if _, err = a.Send(*destination, big.NewInt(1)); err != nil {
 			return
 		}
 	}

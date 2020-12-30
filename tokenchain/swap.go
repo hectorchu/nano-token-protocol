@@ -63,7 +63,7 @@ func ProposeSwap(c *Chain, a *wallet.Account, counterparty string, t *Token, amo
 	if err != nil {
 		return
 	}
-	hash, err := c.send(a, counterparty, &swapProposeMessage{
+	hash, err := c.send(a, &counterparty, &swapProposeMessage{
 		token:  height,
 		amount: amount,
 	})
@@ -116,7 +116,7 @@ func (s *Swap) Accept(a *wallet.Account, t *Token, amount *big.Int) (hash rpc.Bl
 	if err != nil {
 		return
 	}
-	return s.c.send(a, "", &swapAcceptMessage{
+	return s.c.send(a, nil, &swapAcceptMessage{
 		swap:   swap,
 		token:  token,
 		amount: amount,
@@ -171,7 +171,7 @@ func (s *Swap) Confirm(a *wallet.Account) (hash rpc.BlockHash, err error) {
 	if err != nil {
 		return
 	}
-	return s.c.send(a, "", &swapConfirmMessage{swap: height})
+	return s.c.send(a, nil, &swapConfirmMessage{swap: height})
 }
 
 func (s *Swap) checkConfirm(account string) (err error) {
@@ -226,7 +226,7 @@ func (s *Swap) Cancel(a *wallet.Account) (hash rpc.BlockHash, err error) {
 	if err != nil {
 		return
 	}
-	return s.c.send(a, "", &swapCancelMessage{swap: height})
+	return s.c.send(a, nil, &swapCancelMessage{swap: height})
 }
 
 func (s *Swap) checkCancel(account string) (err error) {

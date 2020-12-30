@@ -78,7 +78,7 @@ func TokenGenesis(c *Chain, a *wallet.Account, name string, supply *big.Int, dec
 	if err = checkPositive(supply); err != nil {
 		return
 	}
-	hash, err := c.send(a, "", &genesisMessage{
+	hash, err := c.send(a, nil, &genesisMessage{
 		decimals: decimals,
 		name:     name,
 		supply:   supply,
@@ -118,7 +118,7 @@ func (t *Token) Transfer(a *wallet.Account, account string, amount *big.Int) (ha
 	if err != nil {
 		return
 	}
-	return t.c.send(a, account, &transferMessage{
+	return t.c.send(a, &account, &transferMessage{
 		token:  height,
 		amount: amount,
 	})
