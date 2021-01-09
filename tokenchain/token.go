@@ -1,8 +1,11 @@
 package tokenchain
 
 import (
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
 
 	"github.com/hectorchu/gonano/rpc"
 	"github.com/hectorchu/gonano/wallet"
@@ -140,5 +143,38 @@ func (m *transferMessage) process(c *Chain, hash rpc.BlockHash, height uint32, i
 	t.setBalance(info.BlockAccount, balance.Sub(balance, m.amount))
 	balance = t.Balance(destination)
 	t.setBalance(destination, balance.Add(balance, m.amount))
+	return
+}
+
+func (t *Token) saveState(tx *sql.Tx) (err error) {
+	if _, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS tokens
+		(hash TEXT PRIMARY KEY, chain TEXT, name TEXT, supply TEXT, decimals INTEGER)
+	`); err != nil {
+		return
+	}
+	if _, err = tx.Exec(`
+		CREATE TABLE IF NOT EXISTS token_balances
+		(hash TEXT, account TEXT, balance TEXT, PRIMARY KEY (hash, account))
+	`); err != nil {
+		return
+	}
+	hash := strings.ToUpper(hex.EncodeToString(t.hash))
+	if _, err = tx.Exec(
+		"REPLACE INTO tokens (hash, chain, name, supply, decimals) VALUES (?, ?, ?, ?, ?)",
+		hash, t.c.Address(), t.name, t.supply.String(), t.decimals,
+	); err != nil {
+		return
+	}
+	stmt, err := tx.Prepare("REPLACE INTO token_balances (hash, account, balance) VALUES (?, ?, ?)")
+	if err != nil {
+		return
+	}
+	defer stmt.Close()
+	for account, balance := range t.balances {
+		if _, err = stmt.Exec(hash, account, balance.String()); err != nil {
+			return
+		}
+	}
 	return
 }

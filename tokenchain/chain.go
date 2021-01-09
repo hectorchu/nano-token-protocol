@@ -3,8 +3,11 @@ package tokenchain
 import (
 	"bytes"
 	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
 	"errors"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/hectorchu/gonano/rpc"
@@ -14,6 +17,7 @@ import (
 
 // Chain represents a token chain.
 type Chain struct {
+	seed     []byte
 	w        *wallet.Wallet
 	a        *wallet.Account
 	frontier rpc.BlockHash
@@ -74,6 +78,7 @@ func NewChainFromSeed(seed []byte, rpcURL string) (c *Chain, err error) {
 		return
 	}
 	c = &Chain{
+		seed:   seed,
 		w:      w,
 		a:      a,
 		tokens: make(map[uint32]*Token),
@@ -253,4 +258,38 @@ func (c *Chain) Swap(hash rpc.BlockHash) (s *Swap, err error) {
 		err = errors.New("Swap not found")
 	}
 	return
+}
+
+// SaveState saves the chain state to the DB.
+func (c *Chain) SaveState(db *sql.DB) (err error) {
+	var (
+		seed         = strings.ToUpper(hex.EncodeToString(c.seed))
+		frontier     = strings.ToUpper(hex.EncodeToString(c.frontier))
+		prevFrontier string
+	)
+	err = db.QueryRow("SELECT frontier FROM chains WHERE seed = ?", seed).Scan(&prevFrontier)
+	if err == nil && frontier == prevFrontier {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS chains (seed TEXT PRIMARY KEY, frontier TEXT)`)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	_, err = tx.Exec("REPLACE INTO chains (seed, frontier) VALUES (?, ?)", seed, frontier)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	for _, t := range c.tokens {
+		if err = t.saveState(tx); err != nil {
+			tx.Rollback()
+			return
+		}
+	}
+	return tx.Commit()
 }
