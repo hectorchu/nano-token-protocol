@@ -56,18 +56,18 @@ func (s *Swap) Confirm(a *wallet.Account) (hash rpc.BlockHash, err error)
 func (s *Swap) Hash() rpc.BlockHash
     Hash returns the block hash of the swap.
 
-func (s *Swap) Left() (ss SwapSide)
-    Left returns the left side of the swap.
+func (s *Swap) Left() (sl SwapLeg)
+    Left returns the left leg of the swap.
 
-func (s *Swap) Right() (ss SwapSide)
-    Right returns the right side of the swap.
+func (s *Swap) Right() (sl SwapLeg)
+    Right returns the right leg of the swap.
 
-type SwapSide struct {
+type SwapLeg struct {
 	Account string
 	Token   *Token
 	Amount  *big.Int
 }
-    SwapSide represents a side of the swap.
+    SwapLeg represents a leg of the swap.
 
 type Token struct {
 	// Has unexported fields.

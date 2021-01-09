@@ -12,12 +12,12 @@ import (
 type Swap struct {
 	c           *Chain
 	hash        rpc.BlockHash
-	left, right SwapSide
+	left, right SwapLeg
 	inactive    bool
 }
 
-// SwapSide represents a side of the swap.
-type SwapSide struct {
+// SwapLeg represents a leg of the swap.
+type SwapLeg struct {
 	Account string
 	Token   *Token
 	Amount  *big.Int
@@ -28,20 +28,20 @@ func (s *Swap) Hash() rpc.BlockHash {
 	return s.hash
 }
 
-// Left returns the left side of the swap.
-func (s *Swap) Left() (ss SwapSide) {
-	ss = s.left
-	if ss.Amount != nil {
-		ss.Amount = new(big.Int).Set(ss.Amount)
+// Left returns the left leg of the swap.
+func (s *Swap) Left() (sl SwapLeg) {
+	sl = s.left
+	if sl.Amount != nil {
+		sl.Amount = new(big.Int).Set(sl.Amount)
 	}
 	return
 }
 
-// Right returns the right side of the swap.
-func (s *Swap) Right() (ss SwapSide) {
-	ss = s.right
-	if ss.Amount != nil {
-		ss.Amount = new(big.Int).Set(ss.Amount)
+// Right returns the right leg of the swap.
+func (s *Swap) Right() (sl SwapLeg) {
+	sl = s.right
+	if sl.Amount != nil {
+		sl.Amount = new(big.Int).Set(sl.Amount)
 	}
 	return
 }
@@ -88,12 +88,12 @@ func (m *swapProposeMessage) process(c *Chain, hash rpc.BlockHash, height uint32
 	c.swaps[height] = &Swap{
 		c:    c,
 		hash: hash,
-		left: SwapSide{
+		left: SwapLeg{
 			Account: info.BlockAccount,
 			Token:   t,
 			Amount:  m.amount,
 		},
-		right: SwapSide{
+		right: SwapLeg{
 			Account: destination,
 		},
 	}
@@ -151,7 +151,7 @@ func (m *swapAcceptMessage) process(c *Chain, hash rpc.BlockHash, height uint32,
 	if s.checkAccept(info.BlockAccount, t, m.amount) != nil {
 		return
 	}
-	s.right = SwapSide{
+	s.right = SwapLeg{
 		Account: info.BlockAccount,
 		Token:   t,
 		Amount:  m.amount,
