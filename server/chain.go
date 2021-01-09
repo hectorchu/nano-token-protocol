@@ -3,11 +3,9 @@ package main
 import (
 	"database/sql"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/hectorchu/nano-token-protocol/tokenchain"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 type chainManager struct {
@@ -25,41 +23,21 @@ func newChainManager(c *tokenchain.Chain) (cm *chainManager) {
 }
 
 func (cm *chainManager) loop() {
-	if err := cm.c.Parse(); err != nil {
-		log.Fatalln(err)
-		return
-	}
-	parseTicker := time.NewTicker(10 * time.Second)
-	defer parseTicker.Stop()
-	dbTicker := time.NewTicker(30 * time.Second)
-	defer dbTicker.Stop()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
-		case <-parseTicker.C:
+		case <-ticker.C:
 			if err := cm.c.Parse(); err != nil {
 				log.Fatalln(err)
-				return
 			}
-		case <-dbTicker.C:
-			if err := cm.saveState(); err != nil {
+			if err := withDB(func(db *sql.DB) error {
+				return cm.c.SaveState(db)
+			}); err != nil {
 				log.Fatalln(err)
-				return
 			}
 		case <-cm.quit:
 			return
 		}
 	}
-}
-
-var dbLock sync.Mutex
-
-func (cm *chainManager) saveState() (err error) {
-	dbLock.Lock()
-	defer dbLock.Unlock()
-	db, err := sql.Open("sqlite3", "./chains.db")
-	if err != nil {
-		return
-	}
-	defer db.Close()
-	return cm.c.SaveState(db)
 }
