@@ -27,7 +27,7 @@ func NewChain(rpcURL string) (c *Chain, err error) {
 	if _, err = rand.Read(seed); err != nil {
 		return
 	}
-	if c, err = newFromSeed(seed, rpcURL); err != nil {
+	if c, err = NewChainFromSeed(seed, rpcURL); err != nil {
 		return
 	}
 	return c, setData(c.a, seed)
@@ -48,7 +48,7 @@ func LoadChain(address, rpcURL string) (c *Chain, err error) {
 	if err != nil {
 		return
 	}
-	if c, err = newFromSeed(seed, rpcURL); err != nil {
+	if c, err = NewChainFromSeed(seed, rpcURL); err != nil {
 		return
 	}
 	if c.Address() != address {
@@ -62,7 +62,8 @@ func (c *Chain) Address() string {
 	return c.a.Address()
 }
 
-func newFromSeed(seed []byte, rpcURL string) (c *Chain, err error) {
+// NewChainFromSeed initializes a new chain from a seed.
+func NewChainFromSeed(seed []byte, rpcURL string) (c *Chain, err error) {
 	w, err := wallet.NewWallet(seed)
 	if err != nil {
 		return

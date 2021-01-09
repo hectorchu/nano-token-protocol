@@ -15,6 +15,9 @@ func LoadChain(address, rpcURL string) (c *Chain, err error)
 func NewChain(rpcURL string) (c *Chain, err error)
     NewChain initializes a new chain.
 
+func NewChainFromSeed(seed []byte, rpcURL string) (c *Chain, err error)
+    NewChainFromSeed initializes a new chain from a seed.
+
 func (c *Chain) Address() string
     Address returns the address of the chain.
 
