@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"log"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -19,9 +20,14 @@ type chainManager struct {
 	lastUpdated time.Time
 }
 
-func newChainManager(rpcURL string) (cm *chainManager) {
+func newChainManager(rpcURL string) (cm *chainManager, err error) {
 	cm = &chainManager{
 		chains: make(map[string]*tokenchain.Chain),
+	}
+	if _, err := os.Stat("./chains.db"); err == nil {
+		if err = withDB(func(db *sql.DB) error { return cm.loadState(db, rpcURL) }); err != nil {
+			return nil, err
+		}
 	}
 	go cm.loop(rpcURL)
 	return
@@ -121,17 +127,50 @@ func withDB(cb func(*sql.DB) error) (err error) {
 	return cb(db)
 }
 
+func (cm *chainManager) loadState(db *sql.DB, rpcURL string) (err error) {
+	rows, err := db.Query("SELECT seed FROM chains")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seedStr string
+		if err := rows.Scan(&seedStr); err != nil {
+			return err
+		}
+		seed, err := hex.DecodeString(seedStr)
+		if err != nil {
+			return err
+		}
+		c, err := tokenchain.NewChainFromSeed(seed, rpcURL)
+		if err != nil {
+			return err
+		}
+		cm.chains[c.Address()] = c
+	}
+	if err = rows.Err(); err != nil {
+		return
+	}
+	var lastUpdated int64
+	err = db.QueryRow("SELECT lastUpdated FROM chain_manager WHERE id = 1").Scan(&lastUpdated)
+	if err != nil {
+		return
+	}
+	cm.lastUpdated = time.Unix(lastUpdated, 0).UTC()
+	return
+}
+
 func (cm *chainManager) saveState(db *sql.DB) (err error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return
 	}
-	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS chain_manager (id INTEGER PRIMARY KEY, lastUpdated INTEGER)`)
+	_, err = tx.Exec("CREATE TABLE IF NOT EXISTS chain_manager (id INTEGER PRIMARY KEY, lastUpdated INTEGER)")
 	if err != nil {
 		tx.Rollback()
 		return
 	}
-	_, err = tx.Exec("REPLACE INTO chain_manager (id, lastUpdated) VALUES (?, ?)", 1, cm.lastUpdated.Unix())
+	_, err = tx.Exec("REPLACE INTO chain_manager (id, lastUpdated) VALUES (1, ?)", cm.lastUpdated.Unix())
 	if err != nil {
 		tx.Rollback()
 		return

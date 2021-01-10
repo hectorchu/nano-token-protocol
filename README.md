@@ -21,6 +21,9 @@ func NewChainFromSeed(seed []byte, rpcURL string) (c *Chain, err error)
 func (c *Chain) Address() string
     Address returns the address of the chain.
 
+func (c *Chain) LoadState(db *sql.DB) (err error)
+    LoadState loads the chain state from the DB.
+
 func (c *Chain) Parse() (err error)
     Parse parses the chain for tokens.
 

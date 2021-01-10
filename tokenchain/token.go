@@ -146,10 +146,43 @@ func (m *transferMessage) process(c *Chain, hash rpc.BlockHash, height uint32, i
 	return
 }
 
-func (t *Token) saveState(tx *sql.Tx) (err error) {
+func (t *Token) loadState(db *sql.DB) (err error) {
+	var (
+		hash   = strings.ToUpper(hex.EncodeToString(t.hash))
+		supply string
+		ok     bool
+	)
+	row := db.QueryRow("SELECT name, supply, decimals FROM tokens WHERE hash = ?", hash)
+	if err = row.Scan(&t.name, &supply, &t.decimals); err != nil {
+		return
+	}
+	if t.supply, ok = new(big.Int).SetString(supply, 10); !ok {
+		return errors.New("Failed to parse supply from DB")
+	}
+	t.balances = make(map[string]*big.Int)
+	rows, err := db.Query("SELECT account, balance FROM token_balances WHERE hash = ?", hash)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var account, balanceStr string
+		if err = rows.Scan(&account, &balanceStr); err != nil {
+			return
+		}
+		balance, ok := new(big.Int).SetString(balanceStr, 10)
+		if !ok {
+			return errors.New("Failed to parse balance from DB")
+		}
+		t.balances[account] = balance
+	}
+	return rows.Err()
+}
+
+func (t *Token) saveState(tx *sql.Tx, height uint32) (err error) {
 	if _, err = tx.Exec(`
 		CREATE TABLE IF NOT EXISTS tokens
-		(hash TEXT PRIMARY KEY, chain TEXT, name TEXT, supply TEXT, decimals INTEGER)
+		(hash TEXT PRIMARY KEY, chain TEXT, height INTEGER, name TEXT, supply TEXT, decimals INTEGER)
 	`); err != nil {
 		return
 	}
@@ -161,8 +194,8 @@ func (t *Token) saveState(tx *sql.Tx) (err error) {
 	}
 	hash := strings.ToUpper(hex.EncodeToString(t.hash))
 	if _, err = tx.Exec(
-		"REPLACE INTO tokens (hash, chain, name, supply, decimals) VALUES (?, ?, ?, ?, ?)",
-		hash, t.c.Address(), t.name, t.supply.String(), t.decimals,
+		"REPLACE INTO tokens (hash, chain, height, name, supply, decimals) VALUES (?, ?, ?, ?, ?, ?)",
+		hash, t.c.Address(), height, t.name, t.supply.String(), t.decimals,
 	); err != nil {
 		return
 	}

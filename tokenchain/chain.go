@@ -260,6 +260,46 @@ func (c *Chain) Swap(hash rpc.BlockHash) (s *Swap, err error) {
 	return
 }
 
+// LoadState loads the chain state from the DB.
+func (c *Chain) LoadState(db *sql.DB) (err error) {
+	var (
+		seed     = strings.ToUpper(hex.EncodeToString(c.seed))
+		frontier string
+	)
+	err = db.QueryRow("SELECT frontier FROM chains WHERE seed = ?", seed).Scan(&frontier)
+	if err != nil {
+		return
+	}
+	c.frontier, err = hex.DecodeString(frontier)
+	if err != nil {
+		return
+	}
+	rows, err := db.Query("SELECT hash, height FROM tokens WHERE chain = ?", c.Address())
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			hashStr string
+			height  uint32
+		)
+		if err := rows.Scan(&hashStr, &height); err != nil {
+			return err
+		}
+		hash, err := hex.DecodeString(hashStr)
+		if err != nil {
+			return err
+		}
+		t := &Token{c: c, hash: hash}
+		if err = t.loadState(db); err != nil {
+			return err
+		}
+		c.tokens[height] = t
+	}
+	return rows.Err()
+}
+
 // SaveState saves the chain state to the DB.
 func (c *Chain) SaveState(db *sql.DB) (err error) {
 	var (
@@ -285,8 +325,8 @@ func (c *Chain) SaveState(db *sql.DB) (err error) {
 		tx.Rollback()
 		return
 	}
-	for _, t := range c.tokens {
-		if err = t.saveState(tx); err != nil {
+	for height, t := range c.tokens {
+		if err = t.saveState(tx, height); err != nil {
 			tx.Rollback()
 			return
 		}
