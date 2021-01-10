@@ -5,8 +5,11 @@ import (
 	"net/http"
 )
 
+var chainMan *chainManager
+
 func main() {
-	if _, err := newChainManager("http://[::1]:7076"); err != nil {
+	var err error
+	if chainMan, err = newChainManager("http://[::1]:7076"); err != nil {
 		log.Fatalln(err)
 	}
 	http.HandleFunc("/", rpcHandler)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hectorchu/gonano/rpc"
@@ -16,6 +17,7 @@ import (
 )
 
 type chainManager struct {
+	m           sync.Mutex
 	chains      map[string]*tokenchain.Chain
 	lastUpdated time.Time
 }
@@ -33,6 +35,12 @@ func newChainManager(rpcURL string) (cm *chainManager, err error) {
 	return
 }
 
+func (cm *chainManager) withLock(cb func(*chainManager)) {
+	cm.m.Lock()
+	cb(cm)
+	cm.m.Unlock()
+}
+
 func (cm *chainManager) loop(rpcURL string) {
 	if err := cm.scanForChains(rpcURL); err != nil {
 		log.Fatalln(err)
@@ -40,11 +48,9 @@ func (cm *chainManager) loop(rpcURL string) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
-		select {
-		case <-ticker.C:
-			if err := cm.scanForChains(rpcURL); err != nil {
-				log.Fatalln(err)
-			}
+		<-ticker.C
+		if err := cm.scanForChains(rpcURL); err != nil {
+			log.Fatalln(err)
 		}
 	}
 }
@@ -101,9 +107,14 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 				if c.Address() != address {
 					continue
 				}
+				cm.m.Lock()
 				cm.chains[c.Address()] = c
+			} else {
+				cm.m.Lock()
 			}
-			if err = c.Parse(); err != nil {
+			err = c.Parse()
+			cm.m.Unlock()
+			if err != nil {
 				return err
 			}
 			if err = withDB(func(db *sql.DB) error { return c.SaveState(db) }); err != nil {
@@ -144,6 +155,9 @@ func (cm *chainManager) loadState(db *sql.DB, rpcURL string) (err error) {
 		}
 		c, err := tokenchain.NewChainFromSeed(seed, rpcURL)
 		if err != nil {
+			return err
+		}
+		if err = c.LoadState(db); err != nil {
 			return err
 		}
 		cm.chains[c.Address()] = c
