@@ -24,6 +24,9 @@ func (c *Chain) Address() string
 func (c *Chain) Parse() (err error)
     Parse parses the chain for tokens.
 
+func (c *Chain) SaveState(db *sql.DB) (err error)
+    SaveState saves the chain state to the DB.
+
 func (c *Chain) Swap(hash rpc.BlockHash) (s *Swap, err error)
     Swap gets the swap at the specified block hash.
 

@@ -11,25 +11,27 @@ import (
 	"github.com/hectorchu/gonano/rpc"
 	"github.com/hectorchu/gonano/util"
 	"github.com/hectorchu/nano-token-protocol/tokenchain"
+	_ "github.com/mattn/go-sqlite3"
 )
 
-type chainsManager struct {
-	chains      map[string]*chainManager
+type chainManager struct {
+	chains      map[string]*tokenchain.Chain
 	lastUpdated time.Time
-	quit        chan bool
 }
 
-func newChainsManager(rpcURL string) (cm *chainsManager) {
-	cm = &chainsManager{
-		chains: make(map[string]*chainManager),
-		quit:   make(chan bool),
+func newChainManager(rpcURL string) (cm *chainManager) {
+	cm = &chainManager{
+		chains: make(map[string]*tokenchain.Chain),
 	}
 	go cm.loop(rpcURL)
 	return
 }
 
-func (cm *chainsManager) loop(rpcURL string) {
-	ticker := time.NewTicker(30 * time.Second)
+func (cm *chainManager) loop(rpcURL string) {
+	if err := cm.scanForChains(rpcURL); err != nil {
+		log.Fatalln(err)
+	}
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
@@ -37,14 +39,11 @@ func (cm *chainsManager) loop(rpcURL string) {
 			if err := cm.scanForChains(rpcURL); err != nil {
 				log.Fatalln(err)
 			}
-		case <-cm.quit:
-			return
 		}
 	}
 }
 
-func (cm *chainsManager) scanForChains(rpcURL string) (err error) {
-	log.Println("Scanning for chains...")
+func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 	client := rpc.Client{URL: rpcURL}
 	account, err := util.PubkeyToAddress(make([]byte, 32))
 	if err != nil {
@@ -55,11 +54,14 @@ func (cm *chainsManager) scanForChains(rpcURL string) (err error) {
 		modifiedSince = time.Date(2020, 12, 25, 0, 0, 0, 0, time.UTC)
 	}
 	cm.lastUpdated = time.Now().UTC()
-	for count := 0; ; {
+	for {
 		const batchSize = 1e4
 		accounts, err := client.Ledger(account, batchSize, modifiedSince)
 		if err != nil {
 			return err
+		}
+		if len(accounts) == 0 {
+			break
 		}
 		var (
 			addresses = make([]string, 0, len(accounts))
@@ -80,61 +82,56 @@ func (cm *chainsManager) scanForChains(rpcURL string) (err error) {
 			if address == account {
 				continue
 			}
-			block := blocks[strings.ToUpper(hex.EncodeToString(info.OpenBlock))]
-			seed, err := util.AddressToPubkey(block.Representative)
-			if err != nil {
+			c, ok := cm.chains[address]
+			if !ok {
+				block := blocks[strings.ToUpper(hex.EncodeToString(info.OpenBlock))]
+				seed, err := util.AddressToPubkey(block.Representative)
+				if err != nil {
+					return err
+				}
+				if c, err = tokenchain.NewChainFromSeed(seed, rpcURL); err != nil {
+					return err
+				}
+				if c.Address() != address {
+					continue
+				}
+				cm.chains[c.Address()] = c
+			}
+			if err = c.Parse(); err != nil {
 				return err
 			}
-			c, err := tokenchain.NewChainFromSeed(seed, rpcURL)
-			if err != nil {
-				return err
-			}
-			if c.Address() != address {
-				continue
-			}
-			if err = cm.addChain(c); err != nil {
+			if err = withDB(func(db *sql.DB) error { return c.SaveState(db) }); err != nil {
 				return err
 			}
 		}
-		count += len(addresses)
-		log.Println("Processed", count, "accounts")
 		if len(addresses) < batchSize {
 			break
 		}
 		account = addresses[len(addresses)-1]
 	}
-	return withDB(func(db *sql.DB) error {
-		return cm.saveState(db)
-	})
+	return withDB(func(db *sql.DB) error { return cm.saveState(db) })
 }
 
-func (cm *chainsManager) addChain(c *tokenchain.Chain) (err error) {
-	if _, ok := cm.chains[c.Address()]; ok {
+func withDB(cb func(*sql.DB) error) (err error) {
+	db, err := sql.Open("sqlite3", "./chains.db")
+	if err != nil {
 		return
 	}
-	if err = c.Parse(); err != nil {
-		return
-	}
-	if err = withDB(func(db *sql.DB) error {
-		return c.SaveState(db)
-	}); err != nil {
-		return
-	}
-	cm.chains[c.Address()] = newChainManager(c)
-	return
+	defer db.Close()
+	return cb(db)
 }
 
-func (cm *chainsManager) saveState(db *sql.DB) (err error) {
+func (cm *chainManager) saveState(db *sql.DB) (err error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return
 	}
-	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS manager (id INTEGER PRIMARY KEY, lastUpdated INTEGER)`)
+	_, err = tx.Exec(`CREATE TABLE IF NOT EXISTS chain_manager (id INTEGER PRIMARY KEY, lastUpdated INTEGER)`)
 	if err != nil {
 		tx.Rollback()
 		return
 	}
-	_, err = tx.Exec("REPLACE INTO manager (id, lastUpdated) VALUES (?, ?)", 1, cm.lastUpdated.Unix())
+	_, err = tx.Exec("REPLACE INTO chain_manager (id, lastUpdated) VALUES (?, ?)", 1, cm.lastUpdated.Unix())
 	if err != nil {
 		tx.Rollback()
 		return
