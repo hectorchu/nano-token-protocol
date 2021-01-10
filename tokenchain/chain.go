@@ -236,28 +236,22 @@ func (c *Chain) Tokens() (tokens map[string]*Token) {
 
 // Token gets the token at the specified block hash.
 func (c *Chain) Token(hash rpc.BlockHash) (t *Token, err error) {
-	height, err := c.getHeight(hash)
-	if err != nil {
-		return
+	for _, t = range c.tokens {
+		if bytes.Equal(hash, t.Hash()) {
+			return
+		}
 	}
-	t, ok := c.tokens[height]
-	if !ok {
-		err = errors.New("Token not found")
-	}
-	return
+	return nil, errors.New("Token not found")
 }
 
 // Swap gets the swap at the specified block hash.
 func (c *Chain) Swap(hash rpc.BlockHash) (s *Swap, err error) {
-	height, err := c.getHeight(hash)
-	if err != nil {
-		return
+	for _, s = range c.swaps {
+		if bytes.Equal(hash, s.Hash()) {
+			return
+		}
 	}
-	s, ok := c.swaps[height]
-	if !ok {
-		err = errors.New("Swap not found")
-	}
-	return
+	return nil, errors.New("Swap not found")
 }
 
 // LoadState loads the chain state from the DB.
