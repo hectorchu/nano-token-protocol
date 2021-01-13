@@ -42,15 +42,9 @@ func (cm *chainManager) withLock(cb func(*chainManager)) {
 }
 
 func (cm *chainManager) loop(rpcURL string) {
-	if err := cm.scanForChains(rpcURL); err != nil {
-		log.Fatalln(err)
-	}
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-	for {
-		<-ticker.C
+	for tick := time.Tick(10 * time.Second); ; <-tick {
 		if err := cm.scanForChains(rpcURL); err != nil {
-			log.Fatalln(err)
+			log.Println(err)
 		}
 	}
 }
@@ -65,7 +59,7 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 	if modifiedSince.IsZero() {
 		modifiedSince = time.Date(2020, 12, 25, 0, 0, 0, 0, time.UTC)
 	}
-	cm.lastUpdated = time.Now().UTC()
+	lastUpdated := time.Now().UTC()
 	for {
 		const batchSize = 1e4
 		accounts, err := client.Ledger(account, batchSize, modifiedSince)
@@ -126,6 +120,7 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 		}
 		account = addresses[len(addresses)-1]
 	}
+	cm.lastUpdated = lastUpdated
 	return withDB(func(db *sql.DB) error { return cm.saveState(db) })
 }
 
