@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/hex"
 	"log"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/hectorchu/gonano/rpc"
 	"github.com/hectorchu/gonano/util"
+	"github.com/hectorchu/gonano/websocket"
 	"github.com/hectorchu/nano-token-protocol/tokenchain"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -22,16 +24,45 @@ type chainManager struct {
 	lastUpdated time.Time
 }
 
-func newChainManager(rpcURL string) (cm *chainManager, err error) {
+func newChainManager(rpcURL, wsURL string) (cm *chainManager, err error) {
 	cm = &chainManager{
-		chains: make(map[string]*tokenchain.Chain),
+		chains:      make(map[string]*tokenchain.Chain),
+		lastUpdated: time.Date(2020, 12, 25, 0, 0, 0, 0, time.UTC),
 	}
 	if _, err := os.Stat("./chains.db"); err == nil {
 		if err = withDB(func(db *sql.DB) error { return cm.loadState(db, rpcURL) }); err != nil {
 			return nil, err
 		}
 	}
-	go cm.loop(rpcURL)
+	log.Println("Catching up...")
+	for {
+		lastUpdated := time.Now().UTC()
+		if lastUpdated.Sub(cm.lastUpdated) < 5*time.Minute {
+			break
+		}
+		if err = cm.scanForChains(rpcURL); err != nil {
+			return
+		}
+		cm.lastUpdated = lastUpdated
+		if err = withDB(cm.saveState); err != nil {
+			return
+		}
+	}
+	ws := &websocket.Client{URL: wsURL}
+	if err = ws.Connect(); err != nil {
+		return
+	}
+	messages := make(chan interface{}, 1e4)
+	go func() {
+		for {
+			messages <- <-ws.Messages
+		}
+	}()
+	if err = cm.scanForChains(rpcURL); err != nil {
+		return
+	}
+	log.Println("...done")
+	go cm.loop(messages, rpcURL)
 	return
 }
 
@@ -41,10 +72,17 @@ func (cm *chainManager) withLock(cb func(*chainManager)) {
 	cm.m.Unlock()
 }
 
-func (cm *chainManager) loop(rpcURL string) {
-	for tick := time.Tick(10 * time.Second); ; <-tick {
-		if err := cm.scanForChains(rpcURL); err != nil {
-			log.Println(err)
+func (cm *chainManager) loop(messages <-chan interface{}, rpcURL string) {
+	for {
+		switch m := (<-messages).(type) {
+		case *websocket.Confirmation:
+			if err := cm.scanForChain(m.Block, rpcURL); err != nil {
+				log.Fatalln(err)
+			}
+			cm.lastUpdated = m.Time
+		}
+		if err := withDB(cm.saveState); err != nil {
+			log.Fatalln(err)
 		}
 	}
 }
@@ -55,14 +93,9 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 	if err != nil {
 		return
 	}
-	modifiedSince := cm.lastUpdated
-	if modifiedSince.IsZero() {
-		modifiedSince = time.Date(2020, 12, 25, 0, 0, 0, 0, time.UTC)
-	}
-	lastUpdated := time.Now().UTC()
 	for {
 		const batchSize = 1e4
-		accounts, err := client.Ledger(account, batchSize, modifiedSince)
+		accounts, err := client.Ledger(account, batchSize, cm.lastUpdated)
 		if err != nil {
 			return err
 		}
@@ -88,30 +121,7 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 			if address == account {
 				continue
 			}
-			c, ok := cm.chains[address]
-			if !ok {
-				block := blocks[strings.ToUpper(hex.EncodeToString(info.OpenBlock))]
-				seed, err := util.AddressToPubkey(block.Representative)
-				if err != nil {
-					return err
-				}
-				if c, err = tokenchain.NewChainFromSeed(seed, rpcURL); err != nil {
-					return err
-				}
-				if c.Address() != address {
-					continue
-				}
-				cm.m.Lock()
-				cm.chains[c.Address()] = c
-			} else {
-				cm.m.Lock()
-			}
-			err = c.Parse()
-			cm.m.Unlock()
-			if err != nil {
-				return err
-			}
-			if err = withDB(func(db *sql.DB) error { return c.SaveState(db) }); err != nil {
+			if err = cm.scanForChain(blocks[info.OpenBlock.String()], rpcURL); err != nil {
 				return err
 			}
 		}
@@ -120,8 +130,36 @@ func (cm *chainManager) scanForChains(rpcURL string) (err error) {
 		}
 		account = addresses[len(addresses)-1]
 	}
-	cm.lastUpdated = lastUpdated
-	return withDB(func(db *sql.DB) error { return cm.saveState(db) })
+	return
+}
+
+func (cm *chainManager) scanForChain(block *rpc.Block, rpcURL string) (err error) {
+	c, ok := cm.chains[block.Account]
+	if !ok {
+		if bytes.Count(block.Previous, []byte{0}) != len(block.Previous) {
+			return
+		}
+		seed, err := util.AddressToPubkey(block.Representative)
+		if err != nil {
+			return err
+		}
+		if c, err = tokenchain.NewChainFromSeed(seed, rpcURL); err != nil {
+			return err
+		}
+		if c.Address() != block.Account {
+			return err
+		}
+		cm.m.Lock()
+		cm.chains[c.Address()] = c
+	} else {
+		cm.m.Lock()
+	}
+	err = c.Parse()
+	cm.m.Unlock()
+	if err != nil {
+		return
+	}
+	return withDB(c.SaveState)
 }
 
 func withDB(cb func(*sql.DB) error) (err error) {
