@@ -5,18 +5,15 @@ import (
 	"net/http"
 )
 
-var chainMan *chainManager
-
-const (
-	rpcURL = "http://[::1]:7076"
-	wsURL  = "ws://[::1]:7078"
-)
-
 func main() {
-	var err error
-	if chainMan, err = newChainManager(rpcURL, wsURL); err != nil {
+	const (
+		rpcURL = "http://[::1]:7076"
+		wsURL  = "ws://[::1]:7078"
+	)
+	cm, err := newChainManager(rpcURL, wsURL)
+	if err != nil {
 		log.Fatalln(err)
 	}
-	http.HandleFunc("/", rpcHandler)
+	http.HandleFunc("/", rpcHandler(cm))
 	log.Fatalln(http.ListenAndServe("[::1]:7080", nil))
 }

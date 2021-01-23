@@ -34,6 +34,10 @@ func newChainManager(rpcURL, wsURL string) (cm *chainManager, err error) {
 			return nil, err
 		}
 	}
+	return cm, cm.connect(rpcURL, wsURL)
+}
+
+func (cm *chainManager) connect(rpcURL, wsURL string) (err error) {
 	log.Println("Catching up...")
 	for {
 		lastUpdated := time.Now().UTC()
@@ -55,24 +59,31 @@ func newChainManager(rpcURL, wsURL string) (cm *chainManager, err error) {
 	messages := make(chan interface{}, 1e4)
 	go func() {
 		for {
-			messages <- <-ws.Messages
+			m, ok := <-ws.Messages
+			if !ok {
+				close(messages)
+				break
+			}
+			messages <- m
 		}
 	}()
 	if err = cm.scanForChains(rpcURL); err != nil {
+		ws.Close()
+		<-messages
 		return
 	}
 	log.Println("...done")
-	go cm.loop(messages, rpcURL)
+	go cm.loop(ws, messages, rpcURL, wsURL)
 	return
 }
 
-func (cm *chainManager) withLock(cb func(*chainManager)) {
+func (cm *chainManager) withLock(cb func()) {
 	cm.m.Lock()
-	cb(cm)
+	cb()
 	cm.m.Unlock()
 }
 
-func (cm *chainManager) loop(messages <-chan interface{}, rpcURL string) {
+func (cm *chainManager) loop(ws *websocket.Client, messages <-chan interface{}, rpcURL, wsURL string) {
 	for {
 		switch m := (<-messages).(type) {
 		case *websocket.Confirmation:
@@ -80,6 +91,18 @@ func (cm *chainManager) loop(messages <-chan interface{}, rpcURL string) {
 				log.Fatalln(err)
 			}
 			cm.lastUpdated = m.Time
+		case error:
+			log.Println(m)
+			ws.Close()
+			<-messages
+			for {
+				err := cm.connect(rpcURL, wsURL)
+				if err == nil {
+					return
+				}
+				log.Println(err)
+				time.Sleep(10 * time.Second)
+			}
 		}
 		if err := withDB(cm.saveState); err != nil {
 			log.Fatalln(err)

@@ -10,35 +10,35 @@ import (
 	"strings"
 )
 
-func rpcHandler(w http.ResponseWriter, r *http.Request) {
-	var (
-		buf bytes.Buffer
-		v   struct{ Action string }
-	)
-	io.Copy(&buf, r.Body)
-	r.Body.Close()
-	if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
-		return
+func rpcHandler(cm *chainManager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var (
+			buf bytes.Buffer
+			v   struct{ Action string }
+		)
+		io.Copy(&buf, r.Body)
+		r.Body.Close()
+		if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
+			return
+		}
+		var result map[string]interface{}
+		switch v.Action {
+		case "tokens":
+			result = getTokens(cm)
+		case "token":
+			result = getToken(cm, &buf)
+		case "token_balances":
+			result = getTokenBalances(cm, &buf)
+		case "token_balance":
+			result = getTokenBalance(cm, &buf)
+		}
+		json.NewEncoder(w).Encode(result)
 	}
-	var result map[string]interface{}
-	switch v.Action {
-	case "tokens":
-		result = getTokens()
-	case "token":
-		result = getToken(&buf)
-	case "token_balances":
-		result = getTokenBalances(&buf)
-	case "token_balance":
-		result = getTokenBalance(&buf)
-	}
-	buf.Reset()
-	json.NewEncoder(&buf).Encode(result)
-	io.Copy(w, &buf)
 }
 
-func getTokens() (result map[string]interface{}) {
+func getTokens(cm *chainManager) (result map[string]interface{}) {
 	result = make(map[string]interface{})
-	chainMan.withLock(func(cm *chainManager) {
+	cm.withLock(func() {
 		for _, c := range cm.chains {
 			for _, t := range c.Tokens() {
 				hash := strings.ToUpper(hex.EncodeToString(t.Hash()))
@@ -53,7 +53,7 @@ func getTokens() (result map[string]interface{}) {
 	return
 }
 
-func getToken(buf *bytes.Buffer) (result map[string]interface{}) {
+func getToken(cm *chainManager, buf *bytes.Buffer) (result map[string]interface{}) {
 	result = make(map[string]interface{})
 	var v struct{ Hash string }
 	if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
@@ -65,7 +65,7 @@ func getToken(buf *bytes.Buffer) (result map[string]interface{}) {
 		result["error"] = "Unable to decode hash"
 		return
 	}
-	chainMan.withLock(func(cm *chainManager) {
+	cm.withLock(func() {
 		for _, c := range cm.chains {
 			if t, err := c.Token(hash); err == nil {
 				result["Name"] = t.Name()
@@ -79,7 +79,7 @@ func getToken(buf *bytes.Buffer) (result map[string]interface{}) {
 	return
 }
 
-func getTokenBalances(buf *bytes.Buffer) (result map[string]interface{}) {
+func getTokenBalances(cm *chainManager, buf *bytes.Buffer) (result map[string]interface{}) {
 	result = make(map[string]interface{})
 	var v struct{ Hash string }
 	if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
@@ -91,7 +91,7 @@ func getTokenBalances(buf *bytes.Buffer) (result map[string]interface{}) {
 		result["error"] = "Unable to decode hash"
 		return
 	}
-	chainMan.withLock(func(cm *chainManager) {
+	cm.withLock(func() {
 		for _, c := range cm.chains {
 			if t, err := c.Token(hash); err == nil {
 				for account, balance := range t.Balances() {
@@ -105,7 +105,7 @@ func getTokenBalances(buf *bytes.Buffer) (result map[string]interface{}) {
 	return
 }
 
-func getTokenBalance(buf *bytes.Buffer) (result map[string]interface{}) {
+func getTokenBalance(cm *chainManager, buf *bytes.Buffer) (result map[string]interface{}) {
 	result = make(map[string]interface{})
 	var v struct{ Hash, Account string }
 	if err := json.Unmarshal(buf.Bytes(), &v); err != nil {
@@ -117,7 +117,7 @@ func getTokenBalance(buf *bytes.Buffer) (result map[string]interface{}) {
 		result["error"] = "Unable to decode hash"
 		return
 	}
-	chainMan.withLock(func(cm *chainManager) {
+	cm.withLock(func() {
 		for _, c := range cm.chains {
 			if t, err := c.Token(hash); err == nil {
 				result["Balance"] = t.Balance(v.Account).String()
